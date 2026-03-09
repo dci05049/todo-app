@@ -72,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     todoList.innerHTML = '';
 
     if (hasTodos && filtered.length === 0) {
-      const msg = document.createElement('p');
+      const msg = document.createElement('li');
       msg.className = 'empty-state';
       msg.textContent = `No ${currentFilter} todos.`;
       todoList.appendChild(msg);
