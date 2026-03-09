@@ -1,0 +1,60 @@
+name: On PR Merge — Update Linear
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  update-linear:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract ticket ID from branch
+        id: ticket
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          TICKET_ID=$(echo "$BRANCH" | grep -oP 'AIS-\d+' || echo "")
+          echo "id=$TICKET_ID" >> "$GITHUB_OUTPUT"
+          echo "Extracted ticket: $TICKET_ID from branch: $BRANCH"
+
+      - name: Mark Linear ticket Done
+        if: steps.ticket.outputs.id != ''
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          TICKET_ID: ${{ steps.ticket.outputs.id }}
+        run: |
+          # Find the issue by identifier
+          ISSUE_DATA=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -d "{\"query\":\"{ issueSearch(filter: { identifier: { eq: \\\"$TICKET_ID\\\" } }) { nodes { id identifier title } } }\"}")
+
+          ISSUE_ID=$(echo "$ISSUE_DATA" | jq -r '.data.issueSearch.nodes[0].id // empty')
+
+          if [ -z "$ISSUE_ID" ]; then
+            echo "No Linear issue found for $TICKET_ID"
+            exit 0
+          fi
+
+          echo "Found issue: $ISSUE_ID ($TICKET_ID)"
+
+          # Get the "Done" state ID for the team
+          STATES=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -d "{\"query\":\"{ workflowStates(filter: { team: { key: { eq: \\\"AIS\\\" } }, name: { eq: \\\"Done\\\" } }) { nodes { id name } } }\"}")
+
+          DONE_STATE_ID=$(echo "$STATES" | jq -r '.data.workflowStates.nodes[0].id // empty')
+
+          if [ -z "$DONE_STATE_ID" ]; then
+            echo "Could not find Done state for AIS team"
+            exit 0
+          fi
+
+          # Update the issue state to Done
+          curl -s -X POST https://api.linear.app/graphql \
+            -H "Content-Type: application/json" \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -d "{\"query\":\"mutation { issueUpdate(id: \\\"$ISSUE_ID\\\", input: { stateId: \\\"$DONE_STATE_ID\\\" }) { success issue { identifier title state { name } } } }\"}"
+
+          echo "Marked $TICKET_ID as Done"
